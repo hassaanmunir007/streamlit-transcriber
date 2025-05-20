@@ -47,13 +47,15 @@ if uploaded_files:
         transcript_text = st.session_state.transcriptions[file_hash]
 
         with st.expander("🔍 View Transcription"):
-            st.text_area(label="Transcript", value=transcript_text, height=200)
+            unique_key = f"{file_hash}_transcript"
+            st.text_area(label="Transcript", value=transcript_text, height=200, key=f"text_{unique_key}")
             txt_filename = uploaded_file.name.rsplit('.', 1)[0] + "_transcript.txt"
             st.download_button(
                 label="📥 Download Transcript",
                 data=transcript_text,
                 file_name=txt_filename,
-                mime="text/plain"
+                mime="text/plain",
+                key=f"download_{unique_key}"
             )
 else:
     st.info("Please upload at least one audio file to transcribe.")
