@@ -2,6 +2,6 @@ streamlit
 git+https://github.com/openai/whisper.git
 torch
 torchaudio
-pyannote.audio
 transformers
 huggingface_hub
+git+https://github.com/pyannote/pyannote-audio.git
