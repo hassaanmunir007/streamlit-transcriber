@@ -4,34 +4,40 @@ import tempfile
 import os
 import hashlib
 
-st.set_page_config(page_title="Whisper Transcriber", layout="centered")
-st.title("🎙️ Audio Transcriber with OpenAI Whisper")
+from pyannote.audio import Pipeline
+from datetime import timedelta
+import torch
 
-st.markdown("Upload one or more audio files and get the transcribed text using Whisper.")
+st.set_page_config(page_title="Whisper Transcriber with Diarization", layout="centered")
+st.title("🎙️ Whisper Transcriber + Speaker Diarization")
+
+st.markdown("Upload audio files to transcribe with OpenAI Whisper and detect speakers with Pyannote.")
 
 model_size = st.selectbox("Choose Whisper model size", ["tiny", "base", "small", "medium", "large"])
 uploaded_files = st.file_uploader("Upload audio files", type=["mp3", "wav", "m4a"], accept_multiple_files=True)
 
-# Initialize transcription cache in session state
+# Initialize cache
 if "transcriptions" not in st.session_state:
     st.session_state.transcriptions = {}
 
 def get_file_hash(file):
-    # Compute a hash of the file contents to uniquely identify it
     return hashlib.sha256(file.read()).hexdigest()
 
 if uploaded_files:
     with st.spinner("Loading Whisper model..."):
         model = whisper.load_model(model_size)
 
+    with st.spinner("Loading Pyannote diarization model..."):
+        hf_token = st.secrets["HUGGINGFACE_TOKEN"]
+        diarization_pipeline = Pipeline.from_pretrained("pyannote/speaker-diarization@2.1", use_auth_token=hf_token)
+
     for uploaded_file in uploaded_files:
         st.subheader(f"📁 {uploaded_file.name}")
         st.audio(uploaded_file)
 
-        # Compute file hash to use as key
-        uploaded_file.seek(0)  # make sure pointer is at start before hashing
+        uploaded_file.seek(0)
         file_hash = get_file_hash(uploaded_file)
-        uploaded_file.seek(0)  # reset pointer after reading for hash
+        uploaded_file.seek(0)
 
         if file_hash not in st.session_state.transcriptions:
             with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp:
@@ -40,13 +46,31 @@ if uploaded_files:
 
             with st.spinner(f"Transcribing {uploaded_file.name}..."):
                 result = model.transcribe(tmp_path)
-                st.session_state.transcriptions[file_hash] = result["text"]
+                transcription = result["text"]
+
+            with st.spinner(f"Diarizing {uploaded_file.name}..."):
+                diarization = diarization_pipeline(tmp_path)
 
             os.remove(tmp_path)
 
-        transcript_text = st.session_state.transcriptions[file_hash]
+            # Store results in session
+            st.session_state.transcriptions[file_hash] = {
+                "transcript": transcription,
+                "diarization": diarization
+            }
 
-        with st.expander("🔍 View Transcription"):
+        data = st.session_state.transcriptions[file_hash]
+        diarization = data["diarization"]
+        transcript_text = data["transcript"]
+
+        st.markdown("### 🗣️ Speaker Segments")
+        for turn, _, speaker in diarization.itertracks(yield_label=True):
+            start = str(timedelta(seconds=round(turn.start)))
+            end = str(timedelta(seconds=round(turn.end)))
+            st.markdown(f"**{speaker}**: {start} → {end}")
+
+        st.markdown("### 📝 Full Transcript")
+        with st.expander("🔍 View Transcript"):
             st.text_area(label="Transcript", value=transcript_text, height=200)
             txt_filename = uploaded_file.name.rsplit('.', 1)[0] + "_transcript.txt"
             st.download_button(
