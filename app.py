@@ -9,33 +9,44 @@ st.title("🎙️ Audio Transcriber with OpenAI Whisper")
 
 st.markdown("Upload one or more audio files and get the transcribed text using Whisper.")
 
-model_size = st.selectbox("Choose Whisper model size", ["tiny", "base", "small", "medium", "large"])
+# model_size = st.selectbox("Choose Whisper model size", ["tiny", "base", "small", "medium", "large"])
+model_size = st.selectbox("Choose Whisper model size", ["tiny", "base"])
 uploaded_files = st.file_uploader("Upload audio files", type=["mp3", "wav", "m4a"], accept_multiple_files=True)
 
 # Initialize transcription cache in session state
 if "transcriptions" not in st.session_state:
     st.session_state.transcriptions = {}
 
-def get_file_hash(file):
-    # Compute a hash of the file contents to uniquely identify it
-    return hashlib.sha256(file.read()).hexdigest()
+# Helper: generate SHA-256 from file content
+def get_file_hash(file_bytes):
+    return hashlib.sha256(file_bytes).hexdigest()
+
+# Track current valid file hashes from this upload
+current_file_hashes = set()
+duplicate_files = []
 
 if uploaded_files:
     with st.spinner("Loading Whisper model..."):
         model = whisper.load_model(model_size)
 
     for uploaded_file in uploaded_files:
+        file_bytes = uploaded_file.read()
+        file_hash = get_file_hash(file_bytes)
+        uploaded_file.seek(0)
+
+        # If this file has already been seen *in this upload session*, skip
+        if file_hash in current_file_hashes:
+            duplicate_files.append(uploaded_file.name)
+            continue
+        current_file_hashes.add(file_hash)
+
         st.subheader(f"📁 {uploaded_file.name}")
         st.audio(uploaded_file)
 
-        # Compute file hash to use as key
-        uploaded_file.seek(0)  # make sure pointer is at start before hashing
-        file_hash = get_file_hash(uploaded_file)
-        uploaded_file.seek(0)  # reset pointer after reading for hash
-
+        # If this file is not already in cache, transcribe it
         if file_hash not in st.session_state.transcriptions:
             with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp:
-                tmp.write(uploaded_file.read())
+                tmp.write(file_bytes)
                 tmp_path = tmp.name
 
             with st.spinner(f"Transcribing {uploaded_file.name}..."):
@@ -45,9 +56,9 @@ if uploaded_files:
             os.remove(tmp_path)
 
         transcript_text = st.session_state.transcriptions[file_hash]
+        unique_key = f"{file_hash}_transcript"
 
         with st.expander("🔍 View Transcription"):
-            unique_key = f"{file_hash}_transcript"
             st.text_area(label="Transcript", value=transcript_text, height=200, key=f"text_{unique_key}")
             txt_filename = uploaded_file.name.rsplit('.', 1)[0] + "_transcript.txt"
             st.download_button(
@@ -57,5 +68,16 @@ if uploaded_files:
                 mime="text/plain",
                 key=f"download_{unique_key}"
             )
+
+    # Prune cache: remove transcriptions no longer associated with uploaded files
+    st.session_state.transcriptions = {
+        k: v for k, v in st.session_state.transcriptions.items() if k in current_file_hashes
+    }
+
+    if duplicate_files:
+        st.warning(f"⚠️ Skipped duplicate file(s): {', '.join(duplicate_files)}")
+
 else:
     st.info("Please upload at least one audio file to transcribe.")
+    # Also reset the cache if all files are removed
+    st.session_state.transcriptions = {}
